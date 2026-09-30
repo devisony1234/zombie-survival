@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Last Light — Zombie Survival</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#f3f0e8; --muted:#9ca49b; --blood:#e55b4d; --acid:#c4e86b; --panel:rgba(12,17,16,.88); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; overflow:hidden; color:var(--ink); background:#101716; font-family:'Barlow Condensed',sans-serif; }
+    #game { display:block; width:100vw; height:100vh; cursor:crosshair; }
+    .scanlines { pointer-events:none; position:fixed; inset:0; opacity:.08; background:repeating-linear-gradient(0deg,transparent 0,transparent 3px,#fff 4px); mix-blend-mode:overlay; }
+    .hud { pointer-events:none; position:fixed; inset:0; padding:24px; display:flex; justify-content:space-between; align-items:flex-start; }
+    .brand { letter-spacing:.18em; font-size:12px; color:var(--acid); text-transform:uppercase; font-family:'DM Mono',monospace; }
+    .brand b { display:block; color:var(--ink); font:800 42px/.83 'Barlow Condensed'; letter-spacing:.02em; }
+    .stats { display:flex; gap:10px; }
+    .stat { min-width:94px; padding:9px 14px; background:var(--panel); border-left:3px solid var(--acid); }
+    .stat span { display:block; color:var(--muted); font:10px 'DM Mono'; letter-spacing:.1em; text-transform:uppercase; }
+    .stat strong { display:block; font-size:26px; line-height:1; }
+    #healthWrap { position:fixed; left:24px; bottom:25px; width:220px; }
+    .label { color:var(--muted); font:10px 'DM Mono'; letter-spacing:.1em; text-transform:uppercase; }
+    .bar { height:10px; margin-top:6px; background:#29312d; border:1px solid #56615a; }
+    #health { width:100%; height:100%; background:var(--blood); transition:width .15s; }
+    #ammo { position:fixed; right:24px; bottom:23px; text-align:right; font:20px 'DM Mono'; }
+    #ammo small { display:block; color:var(--muted); font-size:10px; letter-spacing:.1em; }
+    .modal { position:fixed; inset:0; display:grid; place-items:center; background:rgba(4,8,7,.5); }
+    .card { width:min(530px,calc(100% - 40px)); padding:40px; background:var(--panel); border:1px solid #39473e; box-shadow:14px 14px 0 rgba(0,0,0,.25); }
+    .eyebrow { color:var(--acid); font:12px 'DM Mono'; letter-spacing:.16em; text-transform:uppercase; }
+    h1 { margin:8px 0 12px; font-size:clamp(58px,10vw,94px); line-height:.8; letter-spacing:-.03em; text-transform:uppercase; }
+    .card p { color:#b8bdb5; font:15px/1.5 'DM Mono'; }
+    kbd { padding:2px 6px; color:var(--ink); background:#303a34; border:1px solid #526057; font-family:inherit; }
+    button { margin-top:18px; padding:13px 25px; color:#101716; background:var(--acid); border:0; font:700 17px 'Barlow Condensed'; letter-spacing:.1em; text-transform:uppercase; cursor:pointer; }
+    button:hover { background:#e2ff99; transform:translate(-2px,-2px); }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud">
+    <div class="brand">Emergency broadcast <b>LAST LIGHT</b></div>
+    <div class="stats"><div class="stat"><span>Wave</span><strong id="wave">1</strong></div><div class="stat"><span>Score</span><strong id="score">0</strong></div><div class="stat"><span>Time</span><strong id="time">00:00</strong></div></div>
+  </div>
+  <div id="healthWrap"><div class="label">Vital signs</div><div class="bar"><div id="health"></div></div></div>
+  <div id="ammo"><small>9mm / reserve</small><span id="ammoCount">12 / ∞</span></div>
+  <div id="modal" class="modal"><section class="card"><div class="eyebrow">Sector 07 // Nightfall</div><h1 id="title">Last Light</h1><p id="message">The city went dark three nights ago. Hold the line until dawn. Every wave gets faster.</p><p><kbd>WASD</kbd> move &nbsp; <kbd>MOUSE</kbd> aim &nbsp; <kbd>CLICK</kbd> fire &nbsp; <kbd>P</kbd> pause</p><button id="start">Enter the dark</button></section></div>
+  <div class="scanlines"></div>
+<script>
+(() => {
+  const canvas = document.querySelector('#game'), ctx = canvas.getContext('2d');
+  const $ = id => document.getElementById(id); let W, H, dpr, running=false, paused=false, last=0, elapsed=0, spawnClock=0, wave=1, score=0, shake=0;
+  const keys = {}, mouse={x:0,y:0,down:false}; let bullets=[], zombies=[], sparks=[], pickups=[];
+  const player={x:0,y:0,r:15,speed:240,hp:100,maxHp:100,ammo:12,cool:0,inv:0};
+  function resize(){ dpr=Math.min(devicePixelRatio,2); W=innerWidth; H=innerHeight; canvas.width=W*dpr; canvas.height=H*dpr; canvas.style.width=W+'px'; canvas.style.height=H+'px'; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  addEventListener('resize',resize); resize();
+  addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key.toLowerCase()==='p'&&running)paused=!paused;}); addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+  canvas.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY}); canvas.addEventListener('mousedown',()=>mouse.down=true); addEventListener('mouseup',()=>mouse.down=false);
+  $('start').onclick=()=>{reset();$('modal').classList.add('hidden');running=true;last=performance.now();requestAnimationFrame(loop)};
+  function reset(){player.x=W/2;player.y=H/2;player.hp=100;player.ammo=12;player.cool=0;bullets=[];zombies=[];sparks=[];pickups=[];elapsed=0;wave=1;score=0;spawnClock=0;}
+  function spawnZombie(){ const edge=Math.floor(Math.random()*4), pad=45; let x,y; if(edge===0){x=-pad;y=Math.random()*H}else if(edge===1){x=W+pad;y=Math.random()*H}else if(edge===2){x=Math.random()*W;y=-pad}else{x=Math.random()*W;y=H+pad}; const type=Math.random()<Math.min(.1+wave*.012,.32)?'runner':'walker'; zombies.push({x,y,r:type==='runner'?11:15,speed:(type==='runner'?105:53)+wave*4,hp:type==='runner'?1:2+Math.floor(wave/4),max:type==='runner'?1:2+Math.floor(wave/4),type,hit:0}); }
+  function shoot(){ if(player.cool>0||player.ammo<=0)return; const a=Math.atan2(mouse.y-player.y,mouse.x-player.x); player.ammo--;player.cool=.18;bullets.push({x:player.x+Math.cos(a)*18,y:player.y+Math.sin(a)*18,vx:Math.cos(a)*720,vy:Math.sin(a)*720,life:.8}); for(let i=0;i<4;i++)sparks.push({x:player.x+Math.cos(a)*20,y:player.y+Math.sin(a)*20,vx:Math.cos(a)*180+(Math.random()-.5)*80,vy:Math.sin(a)*180+(Math.random()-.5)*80,life:.18,c:'#e9f5ad'}); }
+  function update(dt){ if(paused)return; elapsed+=dt; wave=1+Math.floor(elapsed/25); spawnClock-=dt; player.cool=Math.max(0,player.cool-dt);player.inv=Math.max(0,player.inv-dt); if(mouse.down)shoot();
+    let dx=(keys.d?1:0)-(keys.a?1:0),dy=(keys.s?1:0)-(keys.w?1:0),len=Math.hypot(dx,dy)||1;player.x=Math.max(25,Math.min(W-25,player.x+dx/len*player.speed*dt));player.y=Math.max(25,Math.min(H-25,player.y+dy/len*player.speed*dt));
+    const target=3+wave*1.7; if(spawnClock<=0&&zombies.length<target){spawnZombie();spawnClock=Math.max(.2,1.1-wave*.045);}
+    bullets.forEach(b=>{b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt});bullets=bullets.filter(b=>b.life>0&&b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30);
+    zombies.forEach(z=>{let a=Math.atan2(player.y-z.y,player.x-z.x);z.x+=Math.cos(a)*z.speed*dt;z.y+=Math.sin(a)*z.speed*dt;z.hit=Math.max(0,z.hit-dt);if(Math.hypot(player.x-z.x,player.y-z.y)<z.r+player.r&&player.inv<=0){player.hp-=12;player.inv=.65;shake=8;for(let i=0;i<8;i++)sparks.push({x:player.x,y:player.y,vx:(Math.random()-.5)*150,vy:(Math.random()-.5)*150,life:.35,c:'#e55b4d'});}});
+    bullets.forEach(b=>zombies.forEach(z=>{if(Math.hypot(b.x-z.x,b.y-z.y)<z.r+4){z.hp--;b.life=0;z.hit=.1;for(let i=0;i<5;i++)sparks.push({x:z.x,y:z.y,vx:(Math.random()-.5)*100,vy:(Math.random()-.5)*100,life:.25,c:'#b8d66d'});if(z.hp<=0){score+=z.type==='runner'?25:10;if(Math.random()<.07)pickups.push({x:z.x,y:z.y,r:8});}}})); zombies=zombies.filter(z=>z.hp>0);
+    pickups.forEach(p=>{if(Math.hypot(player.x-p.x,player.y-p.y)<player.r+p.r){player.hp=Math.min(100,player.hp+25);p.gone=true;}});pickups=pickups.filter(p=>!p.gone);sparks.forEach(s=>{s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt});sparks=sparks.filter(s=>s.life>0);shake=Math.max(0,shake-dt*25);
+    if(player.hp<=0){running=false;$('title').textContent='You fell';$('message').textContent=`Final score: ${score}. The dark keeps moving. Try again and hold the line.`;$('start').textContent='Restart';$('modal').classList.remove('hidden');}
+    $('wave').textContent=wave;$('score').textContent=score;$('time').textContent=new Date(elapsed*1000).toISOString().substring(14,19);$('health').style.width=player.hp+'%';$('ammoCount').textContent=player.ammo+' / ∞';
+  }
+  function draw(){ctx.save();let sx=(Math.random()-.5)*shake,sy=(Math.random()-.5)*shake;ctx.translate(sx,sy);ctx.fillStyle='#111917';ctx.fillRect(-10,-10,W+20,H+20);ctx.strokeStyle='rgba(171,195,157,.06)';ctx.lineWidth=1;for(let x=-40;x<W;x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}for(let y=-40;y<H;y+=48){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+    pickups.forEach(p=>{ctx.fillStyle='#c4e86b';ctx.beginPath();ctx.arc(p.x,p.y,p.r+Math.sin(elapsed*5)*2,0,7);ctx.fill();ctx.fillStyle='#172019';ctx.fillRect(p.x-2,p.y-6,4,12);ctx.fillRect(p.x-6,p.y-2,12,4)});
+    bullets.forEach(b=>{ctx.fillStyle='#e9f5ad';ctx.beginPath();ctx.arc(b.x,b.y,3,0,7);ctx.fill()});
+    zombies.forEach(z=>{ctx.save();ctx.translate(z.x,z.y);let a=Math.atan2(player.y-z.y,player.x-z.x);ctx.rotate(a);ctx.fillStyle=z.hit?'#eef5c0':(z.type==='runner'?'#c46d55':'#78915f');ctx.beginPath();ctx.arc(0,0,z.r,0,7);ctx.fill();ctx.fillStyle='#1b211c';ctx.fillRect(2,-6,5,3);ctx.fillRect(2,3,5,3);ctx.restore()});
+    sparks.forEach(s=>{ctx.globalAlpha=Math.max(0,s.life*4);ctx.fillStyle=s.c;ctx.fillRect(s.x,s.y,3,3);ctx.globalAlpha=1});
+    ctx.save();ctx.translate(player.x,player.y);let aim=Math.atan2(mouse.y-player.y,mouse.x-player.x);ctx.rotate(aim);ctx.fillStyle='#dce7c2';ctx.fillRect(0,-4,24,8);ctx.fillStyle=player.inv?'#fff':'#c4e86b';ctx.beginPath();ctx.arc(0,0,player.r,0,7);ctx.fill();ctx.fillStyle='#243028';ctx.beginPath();ctx.arc(5,-5,3,0,7);ctx.fill();ctx.restore();ctx.restore();
+  }
+  function loop(now){if(!running)return;const dt=Math.min((now-last)/1000,.05);last=now;update(dt);draw();requestAnimationFrame(loop)}
+})();
+</script>
+</body>
+</html>
